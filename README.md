@@ -128,6 +128,35 @@ npm run demo                # in another terminal: runs all scenarios, exits non
 Windows note: if your network has no IPv6 route, Node may fail to resolve the Neon host (`ENOTFOUND`). Locally I worked
 around it with a preload: `$env:NODE_OPTIONS = "--require ./scripts/ipv4-dns.cjs"`. Not needed on Vercel.
 
+## Frontend console (optional extra)
+
+The assignment says no UI is needed; this is an optional console to *see* the lifecycle. It is a thin client over the
+existing endpoints and changes nothing in the backend. Same Next.js app, same deployment: open `/`.
+
+| Page | What it does (all via the real API) |
+|---|---|
+| `/` Dashboard | Inventory totals from `GET /events/:id`; session-only counters (see limits below) |
+| `/events` | Tiers, prices, total and available inventory per event |
+| `/reserve` | `POST /events/:id/holds`, live countdown, `POST /orders/:hold_id/cancel-hold`, "simulate payment" on a hold |
+| `/simulator` | `order.paid` / `order.refunded` webhooks (new `event_id` each send; **re-send exact payload** to prove idempotency; full vs partial refund) |
+| `/activity` | Every request: method, path, status, timing, request/response JSON, copy-to-clipboard |
+
+Code layout: `src/lib/api-client.ts` (fetch, never throws) · `src/lib/api-context.tsx` (activity log + session state) ·
+`src/lib/use-webhooks.ts` (payload builders) · `src/components/*` (UI) · `app/(dashboard)/*` (pages).
+Tailwind v4 + lucide-react; no other new dependencies.
+
+Config (both public, no secrets): `NEXT_PUBLIC_API_BASE_URL` (empty = same origin; another origin needs CORS) and
+`NEXT_PUBLIC_EVENT_IDS` (default `evt_001,evt_002`).
+
+Honest limits, imposed by what the API exposes:
+- There is **no list-events endpoint**, so event ids come from `NEXT_PUBLIC_EVENT_IDS`.
+- There is **no endpoint that lists holds or orders**, so "Active holds", "Paid orders" and "Fully refunded" on the dashboard are
+  labelled *this session* and count only actions taken in that browser tab (reset on reload). No global figure is invented.
+  "Held or sold" is `total − available`; the API does not split the two.
+- Full refund in the UI is `order total − refunds the API confirmed` and is only known for orders paid from this UI;
+  for any other order id you type the amount yourself.
+- Hold countdowns use the browser clock for display; the server alone decides expiry.
+
 ## Verification — what was actually run
 
 `npm run demo` against a real Neon Postgres, run twice: against the local Next dev server and against the
@@ -135,6 +164,12 @@ around it with a preload: `$env:NODE_OPTIONS = "--require ./scripts/ipv4-dns.cjs
 refund-before-paid, partial/full refund, duplicate/over-refund, payment after expiry, error responses), including
 5 concurrent identical webhook deliveries (one order) and 40 concurrent single-ticket holds on 20 seats (exactly 20 succeed).
 `tsc --noEmit` (strict + `noUncheckedIndexedAccess`) and `next build` are clean.
+
+The frontend was driven end to end in a real browser (Microsoft Edge via Playwright) against a local production build
+(`next build && next start`) talking to the real Neon database: dashboard stats, create hold + countdown, pay, cancel,
+OVERSOLD error, payment duplicate re-send, 422 mismatch, partial/full refund, refund-before-paid, activity console and the
+mobile layout — all behaved as the API specifies. That browser script is not checked into the repo, and the frontend has
+**not** been re-tested against the Vercel deployment.
 
 Not verified / not done — stated plainly:
 - There are no unit tests; the integration script is the only test suite.
