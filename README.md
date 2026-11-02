@@ -3,7 +3,7 @@
 Real-time ticket inventory with safe checkout holds, plus an idempotent payment-webhook handler.
 Next.js (App Router route handlers) · TypeScript strict · raw SQL via `pg` · Postgres (Neon) · Zod.
 
-- **Live API:** _<fill in after deploy>_
+- **Live API:** https://encore-ticket-mu.vercel.app (e.g. `/events/evt_002`)
 - **Loom:** _<fill in>_
 
 ## Endpoints
@@ -130,13 +130,13 @@ around it with a preload: `$env:NODE_OPTIONS = "--require ./scripts/ipv4-dns.cjs
 
 ## Verification — what was actually run
 
-`npm run demo` against a real Neon Postgres + the local Next dev server: **49/49 checks passed** (Scenarios A, B, C,
+`npm run demo` against a real Neon Postgres, run twice: against the local Next dev server and against the
+**deployed Vercel API** (`BASE_URL=https://encore-ticket-mu.vercel.app`): **49/49 checks passed both times** (Scenarios A, B, C,
 refund-before-paid, partial/full refund, duplicate/over-refund, payment after expiry, error responses), including
 5 concurrent identical webhook deliveries (one order) and 40 concurrent single-ticket holds on 20 seats (exactly 20 succeed).
 `tsc --noEmit` (strict + `noUncheckedIndexedAccess`) and `next build` are clean.
 
 Not verified / not done — stated plainly:
-- The demo has **not** been run against the deployed Vercel URL yet (update this section after deploy).
 - There are no unit tests; the integration script is the only test suite.
 - Concurrency was tested with up to 40 parallel requests from one client, not a load test.
 - Not implemented (stretch goals): rate limiting, `/admin/audit`, request ids/metrics. Only JSON-line `console` logs exist.
