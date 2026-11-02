@@ -143,6 +143,21 @@ npm test                    # unit + DB-backed tests (node:test); ~2-3 min again
 demo at the deployed API with `BASE_URL=https://<deployment> npm run demo` (it still needs `DATABASE_URL` for resets and
 state assertions). If you already ran `db:migrate` before the audit stretch goal, run it again: it only adds `order_audit`.
 
+**Upgrading an existing deployment?** Run `npm run db:migrate` against the database that deployment uses *before* (or right after)
+deploying new code. The schema is idempotent, and newer code needs newer tables (`order_audit`): without it every webhook that
+changes an order returns a 500 (the transaction rolls back, so no data is corrupted, but nothing is processed).
+
+**Smoke test against any deployment (no database access needed):**
+
+```bash
+BASE_URL=https://encore-ticket-mu.vercel.app npm run smoke
+ADMIN_TOKEN=... BASE_URL=https://encore-ticket-mu.vercel.app npm run smoke   # also checks /admin/*
+```
+
+It runs Scenarios A, B and C, out-of-order and partial/full refunds, the error cases and (with a token) the admin metrics and audit,
+using unique ids, then cancels its holds and refunds its orders so inventory returns to where it started. It assumes nobody else is
+using the same tiers while it runs. Unlike `npm run demo`, it does not truncate anything.
+
 Optional environment variables (see `.env.example`):
 
 | Variable | Default | Effect |
@@ -224,7 +239,11 @@ mobile layout — all behaved as the API specifies. That browser script is not c
   paid → partial refund → full refund order showing `inventory_released`, `x-request-id` echoed/generated and present in error bodies).
 
 Not verified / not done — stated plainly:
-- None of the stretch goals has been run against the **Vercel deployment** yet. `/admin/*` there also needs `ADMIN_TOKEN` set in Vercel.
+- **Live deployment:** `npm run smoke` against https://encore-ticket-mu.vercel.app passed every public-API check (scenarios A/B/C,
+  out-of-order, partial/full refunds, error cases, request id, admin endpoints answering 401 without a token) and left inventory
+  unchanged. The first live run exposed a real deployment problem (the live database lacked the `order_audit` table, so webhooks
+  returned 500 until the migration was applied there), which is why the upgrade note above exists. The authenticated `/admin/*`
+  checks and the admin UI pages have not been exercised on the live site by me; `/admin/*` there needs `ADMIN_TOKEN` set in Vercel.
 - **Rate limit and metrics are per server instance** (in-memory). On serverless each instance counts separately and resets on cold
   start, so the limit blunts one abusive client but is not a global guarantee. Production answer: a shared store (Redis/Upstash).
 - Metrics are a simple in-process counter endpoint, not Prometheus/OpenTelemetry. Logs are JSON lines on stdout.

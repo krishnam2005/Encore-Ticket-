@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --env-file-if-exists=.env --test --test-concurrency=1 tests/*.test.ts",
     "db:migrate": "tsx --env-file-if-exists=.env scripts/migrate.ts",
-    "demo": "tsx --env-file-if-exists=.env scripts/demo.ts"
+    "demo": "tsx --env-file-if-exists=.env scripts/demo.ts",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
     "lucide-react": "^1.66.0",
