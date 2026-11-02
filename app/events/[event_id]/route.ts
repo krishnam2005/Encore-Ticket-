@@ -1,12 +1,12 @@
 import { getPool } from "@/lib/db";
-import { handle } from "@/lib/errors";
+import { instrument } from "@/lib/observability";
 import { getEventWithAvailability } from "@/services/inventory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: Request, ctx: { params: Promise<{ event_id: string }> }): Promise<Response> {
-  return handle(async () => {
+export async function GET(req: Request, ctx: { params: Promise<{ event_id: string }> }): Promise<Response> {
+  return instrument("GET /events/:event_id", req, async () => {
     const { event_id } = await ctx.params;
     const { event, tiers } = await getEventWithAvailability(getPool(), event_id);
     return Response.json({

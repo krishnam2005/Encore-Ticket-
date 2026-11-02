@@ -7,6 +7,7 @@ import {
   type RefundPayload,
   type WebhookPayload,
 } from "@/lib/validation";
+import { inventoryTransactionOptions } from "@/lib/settings";
 import { availableForTier } from "./inventory";
 
 export interface WebhookResult {
@@ -26,6 +27,22 @@ interface OrderRow {
 
 function log(level: "info" | "warn" | "error", msg: string, extra: Record<string, unknown>): void {
   console[level === "info" ? "log" : level](JSON.stringify({ level, msg, ...extra }));
+}
+
+/** Appends to order_audit inside the caller's transaction, so audit and state change commit together. */
+async function audit(
+  client: PoolClient,
+  orderId: string,
+  action: string,
+  eventId: string,
+  detail: Record<string, unknown>,
+): Promise<void> {
+  await client.query("INSERT INTO order_audit (order_id, action, event_id, detail) VALUES ($1, $2, $3, $4::jsonb)", [
+    orderId,
+    action,
+    eventId,
+    JSON.stringify(detail),
+  ]);
 }
 
 /**
@@ -72,12 +89,13 @@ export async function processWebhook(p: WebhookPayload): Promise<WebhookResult> 
       // Refund beat the payment. Keep the event durably (processed_at stays NULL) and ack:
       // it is applied when the matching order.paid arrives.
       await client.query("UPDATE webhook_events SET outcome = 'parked_until_paid' WHERE id = $1", [p.event_id]);
+      await audit(client, p.order_id, "refund_parked", p.event_id, { amount_refunded: p.amount_refunded });
       return { status: "pending", outcome: "parked_until_paid" };
     }
     const outcome = await applyRefund(client, order, p);
     await markProcessed(client, p.event_id, outcome);
     return { status: "processed", outcome };
-  });
+  }, inventoryTransactionOptions());
 }
 
 async function lockOrder(client: PoolClient, orderId: string): Promise<OrderRow | undefined> {
@@ -107,6 +125,9 @@ async function applyPaid(client: PoolClient, p: PaidPayload): Promise<string> {
       existing.currency.trim() === p.currency;
     if (!same) {
       log("error", "conflicting order.paid for existing order; ignored", { order_id: p.order_id, event_id: p.event_id });
+      await audit(client, p.order_id, "paid_conflict_ignored", p.event_id, {
+        received: { tier_id: p.tier_id, quantity: p.quantity, amount_total: p.amount_total, currency: p.currency },
+      });
       return "conflicting_paid_ignored";
     }
     return "order_already_exists";
@@ -162,16 +183,41 @@ async function applyPaid(client: PoolClient, p: PaidPayload): Promise<string> {
      VALUES ($1, $2, $3, 'paid', $4, $5, $6, $7)`,
     [p.order_id, p.tier_id, p.quantity, p.amount_total, p.currency, holdId, needsManualRefund],
   );
+  await audit(client, p.order_id, "order_created", p.event_id, {
+    outcome,
+    status: "paid",
+    tier_id: p.tier_id,
+    quantity: p.quantity,
+    amount_total: p.amount_total,
+    currency: p.currency,
+    hold_id: holdId,
+    needs_manual_refund: needsManualRefund,
+  });
   return outcome;
 }
 
 /** Only a full refund ('refunded') stops the order counting as sold, releasing all its tickets. */
-async function applyRefund(client: PoolClient, order: OrderRow, p: RefundPayload): Promise<string> {
+async function applyRefund(
+  client: PoolClient,
+  order: OrderRow,
+  p: RefundPayload,
+  replayedFromParked = false,
+): Promise<string> {
+  const ignored = async (reason: string): Promise<string> => {
+    await audit(client, order.id, "refund_ignored", p.event_id, {
+      reason,
+      amount_refunded: p.amount_refunded,
+      status: order.status,
+      replayed_from_parked: replayedFromParked,
+    });
+    return reason;
+  };
+
   if (order.currency.trim() !== p.currency) {
     log("error", "refund currency mismatch; ignored", { order_id: order.id, event_id: p.event_id });
-    return "refund_currency_mismatch_ignored";
+    return ignored("refund_currency_mismatch_ignored");
   }
-  if (order.status === "refunded") return "already_refunded";
+  if (order.status === "refunded") return ignored("already_refunded");
 
   // amount_refunded is treated as the amount of THIS refund (summed across events).
   // Duplicate deliveries never reach here (webhook_events gate), so a refund is summed once.
@@ -186,7 +232,7 @@ async function applyRefund(client: PoolClient, order: OrderRow, p: RefundPayload
       amount_refunded: p.amount_refunded,
       amount_total: order.amount_total,
     });
-    return "refund_exceeds_order_ignored";
+    return ignored("refund_exceeds_order_ignored");
   }
   const status = total === order.amount_total ? "refunded" : "partially_refunded";
   await client.query(
@@ -197,6 +243,15 @@ async function applyRefund(client: PoolClient, order: OrderRow, p: RefundPayload
       WHERE id = $1`,
     [order.id, status, total],
   );
+  await audit(client, order.id, "refund_applied", p.event_id, {
+    status_before: order.status,
+    status_after: status,
+    amount_refunded: p.amount_refunded,
+    cumulative_refunded: total,
+    amount_total: order.amount_total,
+    inventory_released: status === "refunded",
+    replayed_from_parked: replayedFromParked,
+  });
   return status;
 }
 
@@ -212,7 +267,7 @@ async function replayParkedRefunds(client: PoolClient, orderId: string, currentE
     if (parsed.type !== "order.refunded") continue;
     const order = await lockOrder(client, orderId);
     if (!order) throw new Error("order vanished while replaying parked refunds");
-    const outcome = await applyRefund(client, order, parsed);
+    const outcome = await applyRefund(client, order, parsed, true);
     await markProcessed(client, row.id, `${outcome}_after_parked`);
   }
 }

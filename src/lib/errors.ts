@@ -4,9 +4,14 @@ export type ErrorCode =
   | "EVENT_NOT_FOUND"
   | "TIER_NOT_FOUND"
   | "HOLD_NOT_FOUND"
+  | "ORDER_NOT_FOUND"
   | "OVERSOLD"
   | "HOLD_NOT_ACTIVE"
   | "PAYMENT_MISMATCH"
+  | "RATE_LIMITED"
+  | "UNAUTHORIZED"
+  | "NOT_FOUND"
+  | "CONTENTION"
   | "INTERNAL_ERROR";
 
 export class AppError extends Error {
@@ -15,33 +20,26 @@ export class AppError extends Error {
     readonly code: ErrorCode,
     message: string,
     readonly details?: Record<string, unknown>,
+    readonly headers?: Record<string, string>,
   ) {
     super(message);
   }
 }
 
-export function errorResponse(err: unknown): Response {
+export function errorResponse(err: unknown, requestId?: string): Response {
+  const request_id = requestId === undefined ? {} : { request_id: requestId };
   if (err instanceof AppError) {
     return Response.json(
-      { error: { code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) } },
-      { status: err.status },
+      { error: { code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}), ...request_id } },
+      { status: err.status, headers: err.headers },
     );
   }
-  // Never leak internals; log the real cause server-side.
-  console.error(JSON.stringify({ level: "error", msg: "unhandled", err: String(err) }));
+  // Never leak internals; log the real cause server-side (with the request id so it can be found).
+  console.error(JSON.stringify({ level: "error", msg: "unhandled", request_id: requestId, err: String(err) }));
   return Response.json(
-    { error: { code: "INTERNAL_ERROR", message: "Unexpected server error" } },
+    { error: { code: "INTERNAL_ERROR", message: "Unexpected server error", ...request_id } },
     { status: 500 },
   );
-}
-
-/** Wraps a route body so every thrown error becomes a structured JSON response. */
-export async function handle(fn: () => Promise<Response>): Promise<Response> {
-  try {
-    return await fn();
-  } catch (err) {
-    return errorResponse(err);
-  }
 }
 
 export async function readJson(req: Request): Promise<unknown> {

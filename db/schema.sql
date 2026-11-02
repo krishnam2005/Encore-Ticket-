@@ -64,3 +64,15 @@ CREATE TABLE IF NOT EXISTS webhook_events (
 -- Finds parked refunds when the paid event finally arrives.
 CREATE INDEX IF NOT EXISTS webhook_events_pending_idx
   ON webhook_events (order_id, occurred_at) WHERE processed_at IS NULL;
+
+-- Append-only log of every state change an order goes through (served by GET /admin/audit).
+-- No FK to orders on purpose: a refund can be parked before its order exists.
+CREATE TABLE IF NOT EXISTS order_audit (
+  id       bigserial PRIMARY KEY,
+  order_id text        NOT NULL,
+  at       timestamptz NOT NULL DEFAULT clock_timestamp(),
+  action   text        NOT NULL,
+  event_id text,                                   -- webhook event that caused the change
+  detail   jsonb       NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS order_audit_order_idx ON order_audit (order_id, id);

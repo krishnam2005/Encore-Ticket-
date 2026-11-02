@@ -67,7 +67,7 @@ async function main(): Promise<void> {
   const db = new Client({ connectionString });
   await db.connect();
   const reset = async (): Promise<void> => {
-    await db.query("TRUNCATE webhook_events, orders, holds");
+    await db.query("TRUNCATE webhook_events, orders, holds, order_audit");
   };
   const scalar = async (sql: string, params: unknown[] = []): Promise<unknown> =>
     Object.values((await db.query(sql, params)).rows[0] ?? {})[0];

@@ -30,7 +30,7 @@ export interface TierWithAvailability extends TierRow {
  * clock_timestamp() (not now()) so holds expire the moment their TTL passes, even
  * inside a transaction that waited on a lock.
  */
-const AVAILABLE_EXPR = `
+export const AVAILABLE_EXPR = `
   t.total_inventory
   - COALESCE((SELECT SUM(h.quantity) FROM holds h
               WHERE h.tier_id = t.id AND h.status = 'active' AND h.expires_at > clock_timestamp()), 0)::int
