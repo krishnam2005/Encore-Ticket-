@@ -41,7 +41,14 @@ export interface SessionOrder {
 interface ApiContextValue {
   activity: ActivityEntry[];
   clearActivity: () => void;
-  request: <T>(method: HttpMethod, path: string, body?: unknown) => Promise<ApiResult<T>>;
+  request: <T>(method: HttpMethod, path: string, body?: unknown, headers?: Record<string, string>) => Promise<ApiResult<T>>;
+
+  /** Admin token: held in React state only (never written to storage); lost on reload by design. */
+  adminToken: string | null;
+  adminAuthNotice: string | null;
+  setAdminToken: (token: string | null) => void;
+  /** GET to an admin endpoint with the in-memory token. A 401 clears the token. */
+  adminRequest: <T>(path: string) => Promise<ApiResult<T>>;
 
   events: Record<string, EventState>;
   refreshEvents: () => Promise<void>;
@@ -65,12 +72,36 @@ export function ApiProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<SessionOrder[]>([]);
   const nextId = useRef(1);
 
-  const request = useCallback(async <T,>(method: HttpMethod, path: string, body?: unknown) => {
-    const result = await callApi<T>(method, path, body);
+  const request = useCallback(async <T,>(method: HttpMethod, path: string, body?: unknown, headers?: Record<string, string>) => {
+    const result = await callApi<T>(method, path, body, headers);
     const entry: ActivityEntry = { ...result.entry, id: nextId.current++ };
     setActivity((prev) => [entry, ...prev].slice(0, MAX_ACTIVITY));
     return result;
   }, []);
+
+  const tokenRef = useRef<string | null>(null);
+  const [adminToken, setAdminTokenState] = useState<string | null>(null);
+  const [adminAuthNotice, setAdminAuthNotice] = useState<string | null>(null);
+
+  const setAdminToken = useCallback((token: string | null) => {
+    tokenRef.current = token;
+    setAdminTokenState(token);
+    if (token !== null) setAdminAuthNotice(null);
+  }, []);
+
+  const adminRequest = useCallback(
+    async <T,>(path: string) => {
+      const token = tokenRef.current;
+      const result = await request<T>("GET", path, undefined, token ? { authorization: `Bearer ${token}` } : undefined);
+      if (result.entry.status === 401) {
+        tokenRef.current = null;
+        setAdminTokenState(null);
+        setAdminAuthNotice("The server rejected the admin token (401). Enter it again to continue.");
+      }
+      return result;
+    },
+    [request],
+  );
 
   const loadEvent = useCallback(
     async (id: string) => {
@@ -144,6 +175,10 @@ export function ApiProvider({ children }: { children: ReactNode }) {
       activity,
       clearActivity: () => setActivity([]),
       request,
+      adminToken,
+      adminAuthNotice,
+      setAdminToken,
+      adminRequest,
       events,
       refreshEvents,
       holds,
@@ -153,7 +188,7 @@ export function ApiProvider({ children }: { children: ReactNode }) {
       recordPaid,
       recordRefund,
     }),
-    [activity, request, events, refreshEvents, holds, addHold, updateHold, orders, recordPaid, recordRefund],
+    [activity, request, adminToken, adminAuthNotice, setAdminToken, adminRequest, events, refreshEvents, holds, addHold, updateHold, orders, recordPaid, recordRefund],
   );
 
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>;

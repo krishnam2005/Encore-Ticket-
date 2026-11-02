@@ -23,8 +23,16 @@ export interface ApiResult<T> {
   error: ApiErrorBody["error"] | null; // set for structured API errors
 }
 
-/** Performs the HTTP call. Never throws: network and parse failures are returned in the result. */
-export async function callApi<T>(method: HttpMethod, path: string, body?: unknown): Promise<ApiResult<T>> {
+/**
+ * Performs the HTTP call. Never throws: network and parse failures are returned in the result.
+ * `headers` (e.g. Authorization) are sent but deliberately NOT recorded in the activity entry.
+ */
+export async function callApi<T>(
+  method: HttpMethod,
+  path: string,
+  body?: unknown,
+  headers?: Record<string, string>,
+): Promise<ApiResult<T>> {
   const started = performance.now();
   const timestamp = new Date().toISOString();
   const base = { method, path, timestamp, requestBody: body ?? null };
@@ -32,7 +40,7 @@ export async function callApi<T>(method: HttpMethod, path: string, body?: unknow
   try {
     const res = await fetch(`${API_BASE_URL}${path}`, {
       method,
-      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      headers: body === undefined && headers === undefined ? undefined : { ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store",
     });

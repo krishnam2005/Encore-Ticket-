@@ -166,6 +166,15 @@ existing endpoints and changes nothing in the backend. Same Next.js app, same de
 | `/reserve` | `POST /events/:id/holds`, live countdown, `POST /orders/:hold_id/cancel-hold`, "simulate payment" on a hold |
 | `/simulator` | `order.paid` / `order.refunded` webhooks (new `event_id` each send; **re-send exact payload** to prove idempotency; full vs partial refund) |
 | `/activity` | Every request: method, path, status, timing, request/response JSON, copy-to-clipboard |
+| `/ops` Admin → Overview | `GET /admin/metrics`: requests, error responses, errors by code, webhook outcomes, holds by tier, transaction retries; refresh + optional 10s auto-refresh |
+| `/ops/audit` Admin → Order audit | `GET /admin/audit?order_id=`: order summary, a chronological timeline (hold, payment, refund, inventory release, parked/ignored events, each with timestamp, event id and metadata) and the webhook deliveries |
+| `/ops/monitoring` Admin → System monitoring | Live probes of the public and admin APIs (real latency, from the browser), instance info and operational signals from the metrics, capacity from `GET /events/:id`, plus an explicit list of what the APIs cannot tell us |
+
+**Admin access.** The admin pages ask for the server's `ADMIN_TOKEN` and verify it against `/admin/metrics` before accepting it.
+The token lives in React state only: never in `localStorage`/`sessionStorage`/cookies, never in the activity log, lost on reload;
+"Clear token" locks every admin page. A 401 (also mid-session) clears the token and says so; a 404 explains that `ADMIN_TOKEN`
+is not configured on the server. The pages live under `/ops` because `/admin/*` is owned by the API route handlers (a page and a
+route handler cannot share a path). Nothing in the backend changed for this.
 
 Code layout: `src/lib/api-client.ts` (fetch, never throws) · `src/lib/api-context.tsx` (activity log + session state) ·
 `src/lib/use-webhooks.ts` (payload builders) · `src/components/*` (UI) · `app/(dashboard)/*` (pages).
@@ -198,7 +207,13 @@ mobile layout — all behaved as the API specifies. That browser script is not c
 **not** been re-tested against the Vercel deployment.
 
 **Stretch goals** (added after the core was done and verified; the core demo was re-run after each):
-- **Tests** (`npm test`, `node:test`): 23 tests: validation schemas, rate limiter, and DB-backed webhook tests (duplicate event,
+- **Admin UI** (`/ops/*`) was driven in a real browser (Edge via Playwright, 45 checks, run 3 times in a row, all green) against a local
+  production build and the real Neon database with real seeded data: token gate (wrong token → 401 message, correct token → unlock,
+  mid-session 401 → signed out, server without `ADMIN_TOKEN` → 404 message), live metrics, the audit timeline (including a refund that
+  arrived before its payment), the monitoring probes, "token never in storage / activity log / after reload", and no horizontal
+  overflow at 390 px. That browser script is not in the repo. Not yet run against the Vercel deployment.
+- **Tests** (`npm test`, `node:test`): 36 tests in total. 13 are pure (metrics parsing/aggregation, the audit-timeline builder).
+  The other 23: validation schemas, rate limiter, and DB-backed webhook tests (duplicate event,
   6 concurrent identical deliveries, re-emitted order, conflicting paid, rollback on mismatch, refund-before-paid, partial/full,
   duplicate/over-refund, payment after expiry, audit trail) plus concurrent-hold tests. All 23 passed in `tier-lock` mode and
   in `serializable` mode (one run in serializable mode lost a test to an intermittent local DNS failure; that test passed on re-run).
