@@ -25,12 +25,36 @@ interface Resp {
   headers: Headers;
 }
 
+/**
+ * Connection resets (ECONNRESET, TLS drops) happen on flaky networks. Retry them, but only where a repeat is
+ * harmless: reads, and webhooks (idempotent by event_id). A POST that creates a hold is never retried, because
+ * the first attempt may have succeeded server-side.
+ */
+const isRetryable = (method: "GET" | "POST", path: string): boolean => method === "GET" || path.startsWith("/webhooks/");
+
+async function fetchWithRetry(url: string, init: RequestInit, retryable: boolean): Promise<Response> {
+  const attempts = retryable ? 4 : 1;
+  for (let i = 1; ; i++) {
+    try {
+      return await fetch(url, init);
+    } catch (err) {
+      if (i >= attempts) throw err;
+      console.log(`  (network hiccup, retrying ${i}/${attempts - 1}: ${err instanceof Error && err.cause instanceof Error ? err.cause.message : String(err)})`);
+      await new Promise((r) => setTimeout(r, 400 * i));
+    }
+  }
+}
+
 async function call(method: "GET" | "POST", path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Resp> {
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const res = await fetchWithRetry(
+    `${BASE}${path}`,
+    {
+      method,
+      headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    },
+    isRetryable(method, path),
+  );
   const text = await res.text();
   let parsed: unknown = {};
   try {
