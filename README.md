@@ -4,7 +4,7 @@ Real-time ticket inventory with safe checkout holds, plus an idempotent payment-
 Next.js (App Router route handlers) · TypeScript strict · raw SQL via `pg` · Postgres (Neon) · Zod.
 
 - **Live API:** https://encore-ticket-mu.vercel.app (e.g. `/events/evt_002`)
-- **Loom:** _<fill in>_
+- **Loom walkthrough:** https://www.loom.com/share/b75fde73d1bb44dfb148967070b5fa2a
 
 ## Endpoints
 
